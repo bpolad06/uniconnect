@@ -12,4 +12,6 @@ export const COL = {
   MOODS: "moods",
   CAMPUS_MESSAGES: "campus_messages",
   DAILY_PUZZLES: "dailyPuzzles",
+  FRIEND_EDGES: "friendEdges",
+  CHATS: "chats",
 };

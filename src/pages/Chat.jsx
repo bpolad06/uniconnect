@@ -1,22 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  where,
-} from "firebase/firestore";
 import { ArrowLeft, Loader2, Send } from "lucide-react";
 import { firebase, firebaseReady } from "../firebase.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { chatIdForPair } from "../utils/student.js";
+import { DbService } from "../services/db.js";
 
 export default function Chat() {
   const { friendId } = useParams();
@@ -40,13 +28,8 @@ export default function Chat() {
     async function loadEdges() {
       setLoadingFriends(true);
       try {
-        const q = query(
-          collection(firebase.db, "friendEdges"),
-          where("participants", "array-contains", user.uid),
-        );
-        const snap = await getDocs(q);
-        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        if (!cancelled) setEdges(rows.filter((e) => e.status === "accepted"));
+        const rows = await DbService.getFriendEdges(user.uid);
+        if (!cancelled) setEdges(rows);
       } finally {
         if (!cancelled) setLoadingFriends(false);
       }
@@ -70,10 +53,8 @@ export default function Chat() {
       const uniq = [...new Set(others)];
       const out = [];
       for (const uid of uniq) {
-        const snap = await getDoc(doc(firebase.db, "users", uid));
-        if (snap.exists()) {
-          out.push({ id: snap.id, ...snap.data() });
-        }
+        const profile = await DbService.getUserProfile(uid);
+        if (profile) out.push(profile);
       }
       if (!cancelled) setFriends(out);
     }
@@ -94,20 +75,7 @@ export default function Chat() {
       return;
     }
     const cid = chatIdForPair(user.uid, friendId);
-    const mq = query(
-      collection(firebase.db, "chats", cid, "messages"),
-      orderBy("createdAt", "asc"),
-      limit(200),
-    );
-    const unsub = onSnapshot(mq, (snap) => {
-      setMessages(
-        snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        })),
-      );
-    });
-    return () => unsub();
+    return DbService.subscribeToMessages(cid, setMessages);
   }, [user, friendId]);
 
   useEffect(() => {
@@ -116,7 +84,7 @@ export default function Chat() {
 
   async function onSend(e) {
     e.preventDefault();
-    if (!user || !friendId || !text.trim() || !firebaseReady || !firebase)
+    if (!user || !friendId || !text.trim() || !firebaseReady || !firebase || sending)
       return;
     const accepted = edges.some(
       (e) =>
@@ -128,11 +96,10 @@ export default function Chat() {
     setSending(true);
     try {
       const cid = chatIdForPair(user.uid, friendId);
-      await addDoc(collection(firebase.db, "chats", cid, "messages"), {
+      await DbService.sendMessage(cid, {
         senderId: user.uid,
         text: text.trim(),
         participants: [user.uid, friendId].sort(),
-        createdAt: serverTimestamp(),
       });
       setText("");
     } finally {

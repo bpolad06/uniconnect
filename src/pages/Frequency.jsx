@@ -1,19 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  addDoc,
-  collection,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-} from "firebase/firestore";
 import { Loader2, Radio, Send } from "lucide-react";
 import { firebase, firebaseReady } from "../firebase.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { universityToCampusSlug } from "../utils/campusSlug.js";
 import { anonNicknameFromSeed } from "../utils/anonNickname.js";
-import { COL } from "../models/firestorePaths.js";
+import { DbService } from "../services/db.js";
 
 export default function Frequency() {
   const { user, profile } = useAuth();
@@ -34,17 +25,7 @@ export default function Frequency() {
 
   useEffect(() => {
     if (!firebaseReady || !firebase || !user) return;
-    const mq = query(
-      collection(firebase.db, COL.CAMPUS_MESSAGES, slug, "messages"),
-      orderBy("createdAt", "desc"),
-      limit(80),
-    );
-    const unsub = onSnapshot(mq, (snap) => {
-      setMsgs(
-        snap.docs.map((d) => ({ id: d.id, ...d.data() })).reverse(),
-      );
-    });
-    return () => unsub();
+    return DbService.subscribeToCampusMessages(slug, setMsgs);
   }, [firebaseReady, user, slug]);
 
   useEffect(() => {
@@ -56,15 +37,7 @@ export default function Frequency() {
     if (!firebaseReady || !firebase || !user || !text.trim()) return;
     setSending(true);
     try {
-      await addDoc(
-        collection(firebase.db, COL.CAMPUS_MESSAGES, slug, "messages"),
-        {
-          text: text.trim().slice(0, 500),
-          nickname,
-          universitySlug: slug,
-          createdAt: serverTimestamp(),
-        },
-      );
+      await DbService.sendCampusMessage(slug, { text, nickname });
       setText("");
     } finally {
       setSending(false);

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   collection,
-  getDocs,
   limit,
   onSnapshot,
   query,
@@ -12,8 +11,8 @@ import { Heart, Mail, Search, Sparkles } from "lucide-react";
 import { firebase, firebaseReady } from "../firebase.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { UNIVERSITIES } from "../constants/universities.js";
-import { localDateKey } from "../utils/dateKey.js";
 import { COL } from "../models/firestorePaths.js";
+import { DbService } from "../services/db.js";
 
 function byLetterDate(a, b) {
   const ta = a.createdAt?.seconds || 0;
@@ -68,11 +67,7 @@ export default function Explore() {
       }
       setLoading(true);
       try {
-        const col = collection(firebase.db, COL.USERS);
-        const snap = await getDocs(query(col, limit(80)));
-        const rows = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((row) => row.id !== user.uid);
+        const rows = await DbService.getAllUsers(user.uid);
         if (!cancelled) setStudents(rows);
       } finally {
         if (!cancelled) setLoading(false);

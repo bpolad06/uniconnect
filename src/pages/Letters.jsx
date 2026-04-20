@@ -1,19 +1,8 @@
 import { useEffect, useState } from "react";
-import {
-  addDoc,
-  collection,
-  getDocs,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  where,
-} from "firebase/firestore";
 import { Loader2, Mail, Send } from "lucide-react";
 import { firebase, firebaseReady } from "../firebase.js";
 import { useAuth } from "../context/AuthContext.jsx";
-import { COL } from "../models/firestorePaths.js";
+import { DbService } from "../services/db.js";
 
 function shuffle(a) {
   const arr = [...a];
@@ -33,34 +22,15 @@ export default function Letters() {
   const [sent, setSent] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  async function refresh() {
-    if (!firebaseReady || !firebase || !user) return;
-    setLoading(true);
-    try {
-      const qIn = query(
-        collection(firebase.db, COL.LETTERS),
-        where("recipientUids", "array-contains", user.uid),
-        limit(40),
-      );
-      const qOut = query(
-        collection(firebase.db, COL.LETTERS),
-        where("authorUid", "==", user.uid),
-        limit(40),
-      );
-      const [inSnap, outSnap] = await Promise.all([getDocs(qIn), getDocs(qOut)]);
-      setInbox(
-        inSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byDate),
-      );
-      setSent(
-        outSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byDate),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
-    refresh();
+    if (!firebaseReady || !firebase || !user) return;
+    const unsubIn = DbService.subscribeToLetters(user.uid, "inbox", setInbox);
+    const unsubOut = DbService.subscribeToLetters(user.uid, "sent", setSent);
+    setLoading(false);
+    return () => {
+      unsubIn();
+      unsubOut();
+    };
   }, [user]);
 
   async function sendLetter(e) {
@@ -68,11 +38,8 @@ export default function Letters() {
     if (!firebaseReady || !firebase || !user || !body.trim()) return;
     setBusy(true);
     try {
-      const pool = query(collection(firebase.db, COL.USERS), limit(120));
-      const snap = await getDocs(pool);
-      const ids = snap.docs
-        .map((d) => d.id)
-        .filter((id) => id !== user.uid);
+      const allUsers = await DbService.getAllUsers(user.uid, 120);
+      const ids = allUsers.map((u) => u.id);
       const pick = shuffle(ids).slice(0, 3);
       if (pick.length < 3) {
         window.alert(
@@ -80,14 +47,8 @@ export default function Letters() {
         );
         return;
       }
-      await addDoc(collection(firebase.db, COL.LETTERS), {
-        body: body.trim().slice(0, 4000),
-        authorUid: user.uid,
-        recipientUids: pick,
-        createdAt: serverTimestamp(),
-      });
+      await DbService.sendLetter(user.uid, { body, recipientUids: pick });
       setBody("");
-      await refresh();
       setTab("sent");
     } finally {
       setBusy(false);
@@ -168,7 +129,7 @@ export default function Letters() {
             <p className="text-sm text-slate-500">Hələ məktub yoxdur.</p>
           )}
           {inbox.map((L) => (
-            <LetterCard key={L.id} letter={L} mode="inbox" onChanged={refresh} />
+            <LetterCard key={L.id} letter={L} mode="inbox" />
           ))}
         </div>
       )}
@@ -176,7 +137,7 @@ export default function Letters() {
       {tab === "sent" && (
         <div className="space-y-3">
           {sent.map((L) => (
-            <LetterCard key={L.id} letter={L} mode="sent" onChanged={refresh} />
+            <LetterCard key={L.id} letter={L} mode="sent" />
           ))}
         </div>
       )}
@@ -190,37 +151,24 @@ function byDate(a, b) {
   return tb - ta;
 }
 
-function LetterCard({ letter, mode, onChanged }) {
+function LetterCard({ letter, mode }) {
   const { user } = useAuth();
   const [replies, setReplies] = useState([]);
   const [replyText, setReplyText] = useState("");
 
   useEffect(() => {
     if (!firebaseReady || !firebase || !letter?.id) return;
-    const q = query(
-      collection(firebase.db, COL.LETTERS, letter.id, "replies"),
-      orderBy("createdAt", "asc"),
-      limit(50),
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setReplies(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
-    return () => unsub();
+    return DbService.subscribeToLetterReplies(letter.id, setReplies);
   }, [letter?.id, firebaseReady]);
 
   async function addReply() {
     const t = replyText.trim();
     if (!t || !firebaseReady || !firebase || !user) return;
-    await addDoc(
-      collection(firebase.db, COL.LETTERS, letter.id, "replies"),
-      {
-        authorUid: user.uid,
-        text: t.slice(0, 2000),
-        createdAt: serverTimestamp(),
-      },
-    );
+    await DbService.addLetterReply(letter.id, {
+      authorUid: user.uid,
+      text: t,
+    });
     setReplyText("");
-    onChanged?.();
   }
 
   return (
